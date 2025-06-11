@@ -1,4 +1,4 @@
-# Revision history for rismat-hs
+# Revision history for timer-hs
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

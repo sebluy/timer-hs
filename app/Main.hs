@@ -1,75 +1,120 @@
-import System.IO
-import Data.IORef (IORef, writeIORef, newIORef, readIORef)
+import System.Posix.Signals
+import System.Environment
 import Data.Time.Clock
 import Data.Function
 import Control.Concurrent.Timer
 import Control.Concurrent.Suspend
+import Control.Concurrent
+import Text.Printf
+import Text.Read
+import Data.Maybe
+import Control.Exception
+import Data.Time.Clock.POSIX
+import Data.Map (elems, fromListWith, foldrWithKey)
 
 data Command =
     Start String
-    | Stop
+    | Summary
     | Unknown
 
-data Status =
-    Running String UTCTime TimerIO
-    | Stopped
+data LogEntry =
+    CreateLog { logId :: Int
+           , logTask :: String
+           , logStart :: UTCTime
+           , logEnd :: UTCTime
+           } deriving Show
 
-data AppState = AppState { status :: Status }
+data Entry = Entry { entryId :: Int
+                   , entryTask :: String
+                   , entryStart :: UTCTime
+                   , entryEnd :: UTCTime
+                   }
 
 main :: IO ()
 main = do
-    stateRef <- newIORef AppState {status=Stopped}
-    runLoop stateRef
+    args <- getArgs
+    processCommand $ parseCommand args
 
-runLoop :: IORef AppState -> IO ()
-runLoop stateRef = do
-    command <- prompt ">>> "
-    let cmd = parseCommand command
-    processCommand cmd stateRef
-    print cmd
-    readIORef stateRef >>= print
-    runLoop stateRef
-
-prompt :: String -> IO String
-prompt text = do
-    putStr text
-    hFlush stdout
-    getLine
-
-parseCommand :: String -> Command
-parseCommand cmd = case words cmd of
+parseCommand :: [String] -> Command
+parseCommand cmd = case cmd of
     ["start", task] -> Start task
-    ["stop"] -> Stop
+    ["summary"] -> Summary
     _ -> Unknown
 
-instance Show Command where
-    show (Start task) = "starting " ++ task
-    show Stop = "stopping"
-    show Unknown = "unknown command"
+writeCreateLog :: Int -> String -> UTCTime -> UTCTime -> IO ()
+writeCreateLog eid task start end =
+    appendFile "time.log"
+               (printf "Create %d %s %d %d\n" eid task start' end')
+    where start' = round $ utcTimeToPOSIXSeconds start :: Int
+          end' = round $ utcTimeToPOSIXSeconds end :: Int
 
-instance Show Status where
-    show (Running task time _) = "running " ++ task ++ " " ++ show time
-    show Stopped = "stopped"
+minuteHandler :: UTCTime -> IO ()
+minuteHandler start = do
+    current <- getCurrentTime
+    putStrLn $ show (diffTimeInMinutes current start) ++ ":00"
 
-instance Show AppState where
-    show = show . status
+readLog :: IO [Entry]
+readLog = do
+    contents <- readFile "time.log"
+    let logEntries = fromMaybe [] $ sequence $ map parseLogEntry $ lines contents
+        ids = map logId logEntries
+    return $ map entryFromLog $ elems $ fromListWith (\e1 _ -> e1) (zip ids logEntries)
 
-processCommand :: Command -> IORef AppState -> IO ()
-processCommand (Start task) stateRef = do
-    time <- getCurrentTime
-    timer <- repeatedTimer (putStrLn "time") (sDelay 1)
-    writeIORef stateRef AppState {status=Running task time timer}
-processCommand Stop stateRef = do
-    state <- readIORef stateRef
-    case status state of
-        Running _ time timer -> do
-            stopTimer timer
-            writeIORef stateRef AppState {status=Stopped}
-            currentTime <- getCurrentTime
-            putStrLn ("spent: " ++ show (diffTimeInMinutes currentTime time) ++ " minutes")
-        Stopped -> return ()
-processCommand Unknown _ = return ()
+entryFromLog :: LogEntry -> Entry
+entryFromLog e = Entry {
+    entryId = logId e,
+    entryTask = logTask e,
+    entryStart = logStart e,
+    entryEnd = logEnd e
+}
 
+parseLogEntry :: String -> Maybe LogEntry
+parseLogEntry line = case words line of
+    ["Create", id', task, start, end] -> do
+        id'' <- readMaybe id'
+        start' <- readMaybe start
+        end' <- readMaybe end
+        return CreateLog {
+            logId = id'',
+            logTask = task,
+            logStart = posixSecondsToUTCTime $ fromIntegral (start' :: Int),
+            logEnd = posixSecondsToUTCTime $ fromIntegral (end' :: Int)
+        }
+    _ -> Nothing
+
+
+getNextID :: IO Int
+getNextID = do
+    entries <- readLog
+    let maxId = max0 $ map entryId $ entries
+    _ <- evaluate maxId
+    return (maxId + 1)
+    where max0 [] = 0
+          max0 xs = maximum xs
+
+processCommand :: Command -> IO ()
+processCommand (Start task) = do
+    stopChan <- newChan
+    start <- getCurrentTime
+    _ <- repeatedTimer (minuteHandler start) (mDelay 1)
+    _ <- installHandler sigINT (Catch $ writeChan stopChan ()) Nothing
+    _ <- readChan stopChan
+    end <- getCurrentTime
+    putStrLn ("\nspent: " ++ show (diffTimeInMinutes end start) ++ " minutes")
+    nextId <- getNextID
+    writeCreateLog nextId task start end
+
+processCommand Summary = do
+    return ()
+    entries <- readLog
+    let zipped = zip (map entryTask entries) (map duration entries)
+    let entryMap = fromListWith (+) zipped
+    _ <- sequence $ foldrWithKey (\task dur l -> (putStrLn $ printf "%s: %d" task dur) : l) [] entryMap
+    return ()
+
+processCommand Unknown = putStrLn "Usage:\n\n\
+      \  timer-hs start <task>\
+      \  timer-hs summary"
 
 diffTimeInMinutes :: UTCTime -> UTCTime -> Int
 diffTimeInMinutes t1 t2 =
@@ -77,3 +122,8 @@ diffTimeInMinutes t1 t2 =
    & nominalDiffTimeToSeconds
    & (/ 60)
    & round
+
+duration :: Entry -> Int
+duration e = diffUTCTime (entryEnd e) (entryStart e)
+    & nominalDiffTimeToSeconds
+    & round
