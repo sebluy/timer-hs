@@ -3,13 +3,15 @@
 ## timer-hs start <task>
 ## timer-hs list <n>
 ## timer-hs summary
+## timer-hs delete <id>
 
 TODO
 ## timer-hs update <id> <task> <start> <stop>
-## timer-hs delete <id>
 ## timer-hs summary daily
 ## timer-hs summary weekly
-## timer-hs summary monthly
+
+FUTURE
+## timer-hs summary total
 ## timer-hs csv
 
 # File Format

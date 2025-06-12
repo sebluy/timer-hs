@@ -13,12 +13,13 @@ import Data.Time.Clock.POSIX
 import Data.Map (elems, fromListWith, mapWithKey, empty, insert, delete)
 import Data.Time.Format
 import Data.Time.LocalTime
+import Data.Time
 
 data Command =
     Start String
     | Delete Int
     | List
-    | Summary
+    | SummaryDaily
     | Unknown
 
 data LogEntry =
@@ -43,7 +44,7 @@ main = do
 parseCommand :: [String] -> Command
 parseCommand cmd = case cmd of
     ["start", task] -> Start task
-    ["summary"] -> Summary
+    ["summary"] -> SummaryDaily
     ["list"] -> List
     ["delete", eid] -> maybe Unknown Delete $ readMaybe eid
     _ -> Unknown
@@ -137,13 +138,17 @@ processCommand (Start task) = do
     nextId <- getNextID
     writeCreateLog nextId task start end
 
-processCommand Summary = do
+processCommand SummaryDaily = do
     entries <- readLog
-    let zipped = zip (map entryTask entries) (map duration entries)
+    now <- getLocalTime
+    let inRange = filter (startedToday now) entries
+    let zipped = zip (map entryTask inRange) (map duration inRange)
     let entryMap = fromListWith (+) zipped
     _ <- sequence $ elems $ mapWithKey printSummary entryMap
     return ()
     where printSummary task dur = putStrLn $ printf "%s: %d" task dur
+          startedToday now e = (startOfDay now) < (entryStart e) && (entryStart e) < (endOfDay now)
+
 
 processCommand List = do
     entries <- readLog
@@ -173,6 +178,12 @@ duration e = diffLocalTime (entryEnd e) (entryStart e)
 
 formatLocalTime :: LocalTime -> String
 formatLocalTime date =  formatTime defaultTimeLocale "%F %I:%M:%S %p" date
+
+startOfDay :: LocalTime -> LocalTime
+startOfDay (LocalTime day _) = LocalTime day midnight
+
+endOfDay :: LocalTime -> LocalTime
+endOfDay (LocalTime day _) = LocalTime (addDays 1 day) midnight
 
 instance Show Entry where
     show e = printf "%5d: %10s %24s %24s"
