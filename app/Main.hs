@@ -10,22 +10,24 @@ import Text.Read
 import Data.Maybe
 import Control.Exception
 import Data.Time.Clock.POSIX
-import Data.Map (elems, fromListWith, mapWithKey)
+import Data.Map (elems, fromListWith, mapWithKey, empty, insert, delete)
 import Data.Time.Format
 import Data.Time.LocalTime
 
 data Command =
     Start String
+    | Delete Int
     | List
     | Summary
     | Unknown
 
 data LogEntry =
     CreateLog { logId :: Int
-           , logTask :: String
-           , logStart :: LocalTime
-           , logEnd :: LocalTime
-           } deriving Show
+              , logTask :: String
+              , logStart :: LocalTime
+              , logEnd :: LocalTime
+              }
+    | DeleteLog { logId :: Int } deriving Show
 
 data Entry = Entry { entryId :: Int
                    , entryTask :: String
@@ -43,6 +45,7 @@ parseCommand cmd = case cmd of
     ["start", task] -> Start task
     ["summary"] -> Summary
     ["list"] -> List
+    ["delete", eid] -> maybe Unknown Delete $ readMaybe eid
     _ -> Unknown
 
 writeCreateLog :: Int -> String -> LocalTime -> LocalTime -> IO ()
@@ -50,8 +53,10 @@ writeCreateLog eid task start end = do
     tz <- getCurrentTimeZone
     let start' = localToTimestamp start tz
         end' = localToTimestamp end tz
-    appendFile "time.log"
-               (printf "Create %d %s %d %d\n" eid task start' end')
+    appendFile "time.log" $ printf "Create %d %s %d %d\n" eid task start' end'
+
+writeDeleteLog :: Int -> IO ()
+writeDeleteLog eid = appendFile "time.log" $ printf "Delete %d\n" eid
 
 minuteHandler :: LocalTime -> IO ()
 minuteHandler start = do
@@ -68,8 +73,12 @@ readLog = do
     contents <- readFile "time.log"
     tz <- getCurrentTimeZone
     let logEntries = fromMaybe [] $ sequence $ map (parseLogEntry tz) $ lines contents
-        ids = map logId logEntries
-    return $ map entryFromLog $ elems $ fromListWith (\e1 _ -> e1) (zip ids logEntries)
+    return $ replayLog logEntries
+
+replayLog :: [LogEntry] -> [Entry]
+replayLog entryLog = elems $ foldr combine empty $ reverse entryLog
+    where combine logItem@(CreateLog eid _ _ _) = insert eid (entryFromLog logItem)
+          combine (DeleteLog eid) = delete eid
 
 entryFromLog :: LogEntry -> Entry
 entryFromLog e = Entry {
@@ -90,6 +99,11 @@ parseLogEntry tz line = case words line of
             logTask = task,
             logStart = timestampToLocal start' tz,
             logEnd = timestampToLocal end' tz
+        }
+    ["Delete", id'] -> do
+        id'' <- readMaybe id'
+        return DeleteLog {
+            logId = id''
         }
     _ -> Nothing
 
@@ -131,10 +145,13 @@ processCommand Summary = do
     return ()
     where printSummary task dur = putStrLn $ printf "%s: %d" task dur
 
--- TODO: fix time zone
 processCommand List = do
     entries <- readLog
     _ <- sequence $ map (putStrLn . show) entries
+    return ()
+
+processCommand (Delete eid) = do
+    writeDeleteLog eid
     return ()
 
 processCommand Unknown = putStrLn "Usage:\n\n\
