@@ -10,24 +10,27 @@ import Text.Read
 import Data.Maybe
 import Control.Exception
 import Data.Time.Clock.POSIX
-import Data.Map (elems, fromListWith, foldrWithKey)
+import Data.Map (elems, fromListWith, mapWithKey)
+import Data.Time.Format
+import Data.Time.LocalTime
 
 data Command =
     Start String
+    | List
     | Summary
     | Unknown
 
 data LogEntry =
     CreateLog { logId :: Int
            , logTask :: String
-           , logStart :: UTCTime
-           , logEnd :: UTCTime
+           , logStart :: LocalTime
+           , logEnd :: LocalTime
            } deriving Show
 
 data Entry = Entry { entryId :: Int
                    , entryTask :: String
-                   , entryStart :: UTCTime
-                   , entryEnd :: UTCTime
+                   , entryStart :: LocalTime
+                   , entryEnd :: LocalTime
                    }
 
 main :: IO ()
@@ -39,24 +42,32 @@ parseCommand :: [String] -> Command
 parseCommand cmd = case cmd of
     ["start", task] -> Start task
     ["summary"] -> Summary
+    ["list"] -> List
     _ -> Unknown
 
-writeCreateLog :: Int -> String -> UTCTime -> UTCTime -> IO ()
-writeCreateLog eid task start end =
+writeCreateLog :: Int -> String -> LocalTime -> LocalTime -> IO ()
+writeCreateLog eid task start end = do
+    tz <- getCurrentTimeZone
+    let start' = localToTimestamp start tz
+        end' = localToTimestamp end tz
     appendFile "time.log"
                (printf "Create %d %s %d %d\n" eid task start' end')
-    where start' = round $ utcTimeToPOSIXSeconds start :: Int
-          end' = round $ utcTimeToPOSIXSeconds end :: Int
 
-minuteHandler :: UTCTime -> IO ()
+minuteHandler :: LocalTime -> IO ()
 minuteHandler start = do
-    current <- getCurrentTime
+    current <- getLocalTime
     putStrLn $ show (diffTimeInMinutes current start) ++ ":00"
+
+getLocalTime :: IO LocalTime
+getLocalTime = do
+    zoned <- getZonedTime
+    return $ zonedTimeToLocalTime zoned
 
 readLog :: IO [Entry]
 readLog = do
     contents <- readFile "time.log"
-    let logEntries = fromMaybe [] $ sequence $ map parseLogEntry $ lines contents
+    tz <- getCurrentTimeZone
+    let logEntries = fromMaybe [] $ sequence $ map (parseLogEntry tz) $ lines contents
         ids = map logId logEntries
     return $ map entryFromLog $ elems $ fromListWith (\e1 _ -> e1) (zip ids logEntries)
 
@@ -68,8 +79,8 @@ entryFromLog e = Entry {
     entryEnd = logEnd e
 }
 
-parseLogEntry :: String -> Maybe LogEntry
-parseLogEntry line = case words line of
+parseLogEntry :: TimeZone -> String -> Maybe LogEntry
+parseLogEntry tz line = case words line of
     ["Create", id', task, start, end] -> do
         id'' <- readMaybe id'
         start' <- readMaybe start
@@ -77,11 +88,19 @@ parseLogEntry line = case words line of
         return CreateLog {
             logId = id'',
             logTask = task,
-            logStart = posixSecondsToUTCTime $ fromIntegral (start' :: Int),
-            logEnd = posixSecondsToUTCTime $ fromIntegral (end' :: Int)
+            logStart = timestampToLocal start' tz,
+            logEnd = timestampToLocal end' tz
         }
     _ -> Nothing
 
+
+timestampToLocal :: Int -> TimeZone -> LocalTime
+timestampToLocal ts tz =
+     utcToLocalTime tz $ posixSecondsToUTCTime $ fromIntegral (ts :: Int)
+
+localToTimestamp :: LocalTime -> TimeZone -> Int
+localToTimestamp time tz =
+       round $ utcTimeToPOSIXSeconds $ localTimeToUTC tz time
 
 getNextID :: IO Int
 getNextID = do
@@ -95,35 +114,52 @@ getNextID = do
 processCommand :: Command -> IO ()
 processCommand (Start task) = do
     stopChan <- newChan
-    start <- getCurrentTime
+    start <- getLocalTime
     _ <- repeatedTimer (minuteHandler start) (mDelay 1)
     _ <- installHandler sigINT (Catch $ writeChan stopChan ()) Nothing
     _ <- readChan stopChan
-    end <- getCurrentTime
+    end <- getLocalTime
     putStrLn ("\nspent: " ++ show (diffTimeInMinutes end start) ++ " minutes")
     nextId <- getNextID
     writeCreateLog nextId task start end
 
 processCommand Summary = do
-    return ()
     entries <- readLog
     let zipped = zip (map entryTask entries) (map duration entries)
     let entryMap = fromListWith (+) zipped
-    _ <- sequence $ foldrWithKey (\task dur l -> (putStrLn $ printf "%s: %d" task dur) : l) [] entryMap
+    _ <- sequence $ elems $ mapWithKey printSummary entryMap
+    return ()
+    where printSummary task dur = putStrLn $ printf "%s: %d" task dur
+
+-- TODO: fix time zone
+processCommand List = do
+    entries <- readLog
+    _ <- sequence $ map (putStrLn . show) entries
     return ()
 
 processCommand Unknown = putStrLn "Usage:\n\n\
-      \  timer-hs start <task>\
+      \  timer-hs start <task>\n\
+      \  timer-hs list\n\
       \  timer-hs summary"
 
-diffTimeInMinutes :: UTCTime -> UTCTime -> Int
+diffTimeInMinutes :: LocalTime -> LocalTime -> Int
 diffTimeInMinutes t1 t2 =
-   diffUTCTime t1 t2
+   diffLocalTime t1 t2
    & nominalDiffTimeToSeconds
    & (/ 60)
    & round
 
 duration :: Entry -> Int
-duration e = diffUTCTime (entryEnd e) (entryStart e)
+duration e = diffLocalTime (entryEnd e) (entryStart e)
     & nominalDiffTimeToSeconds
     & round
+
+formatLocalTime :: LocalTime -> String
+formatLocalTime date =  formatTime defaultTimeLocale "%F %I:%M:%S %p" date
+
+instance Show Entry where
+    show e = printf "%5d: %10s %24s %24s"
+        (entryId e)
+        (entryTask e)
+        (formatLocalTime $ entryStart e)
+        (formatLocalTime $ entryEnd e)

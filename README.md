@@ -2,6 +2,9 @@
 
 ## timer-hs start <task>
 ## timer-hs list <n>
+## timer-hs summary
+
+TODO
 ## timer-hs update <id> <task> <start> <stop>
 ## timer-hs delete <id>
 ## timer-hs summary daily
@@ -16,7 +19,8 @@ A log of all modifications to entries as follows:
 
 ## Example
 
-Create 1 "haskell" 2025-06-04T10:00:00 2025-06-04T11:00:00
+Create 1 "haskell" 12345 56789
+Update 1 "haskell" 90432 98798
 Delete 1
 
 
