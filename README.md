@@ -6,19 +6,19 @@ A simple command line time tracker written in Haskell.
 timer-hs start <task>
 timer-hs list <n>
 timer-hs summary
+timer-hs summary daily
+timer-hs summary total
+timer-hs summary weekly
+timer-hs update <id> <task> <start> <stop>
 timer-hs delete <id>
 ```
 
 ### TODO
-```
-timer-hs update <id> <task> <start> <stop>
-timer-hs summary daily
-timer-hs summary weekly
-```
+- More error checking.
+- Allow update to be given any set of fields & support more datetime formats.
 
 ### FUTURE
 ```
-timer-hs summary total
 timer-hs csv
 ```
 
