@@ -1,5 +1,11 @@
 A simple command line time tracker written in Haskell.
 
+## Build and Install
+
+```
+cabal install exe:timer-hs --installdir=./bin --overwrite-policy=always
+```
+
 ## Operations
 
 ```
@@ -14,6 +20,7 @@ timer-hs delete <id>
 ```
 
 ### TODO
+- Fix bug during setup when time.log doesn't exist.
 - More error checking.
 - Allow update to be given any set of fields & support more datetime formats.
 

@@ -86,7 +86,13 @@ writeLog (DeleteLog eid) = appendFile "time.log" $ printf "Delete %d\n" eid
 minuteHandler :: LocalTime -> IO ()
 minuteHandler start = do
     current <- getLocalTime
-    putStrLn $ showDuration (diffTimeInSeconds current start)
+    let dur = diffTimeInSeconds current start
+    putStrLn $ showDuration $ roundToMultiple dur 60
+
+roundToMultiple :: Int -> Int -> Int
+roundToMultiple n mul = fromIntegral $ (round $ n' / mul') * mul
+    where n' = fromIntegral n :: Double
+          mul' = fromIntegral mul
 
 getLocalTime :: IO LocalTime
 getLocalTime = do
@@ -132,12 +138,8 @@ localToTimestamp :: LocalTime -> TimeZone -> Int
 localToTimestamp time tz =
        round $ utcTimeToPOSIXSeconds $ localTimeToUTC tz time
 
-getNextID :: IO Int
-getNextID = do
-    entries <- readLog
-    let maxId = max0 $ map entryId $ entries
-    _ <- evaluate maxId
-    return (maxId + 1)
+nextId :: [Entry] -> Int
+nextId entries = (max0 $ map entryId $ entries) + 1
     where max0 [] = 0
           max0 xs = maximum xs
 
@@ -145,13 +147,20 @@ processCommand :: Command -> IO ()
 processCommand (Start task) = do
     stopChan <- newChan
     start <- getLocalTime
-    _ <- repeatedTimer (minuteHandler start) (mDelay 1)
+    _ <- repeatedTimer (minuteHandler start) (mDelay 10)
     _ <- installHandler sigINT (Catch $ writeChan stopChan ()) Nothing
     _ <- readChan stopChan
     end <- getLocalTime
-    putStrLn ("\nspent: " ++ showDuration (diffTimeInSeconds end start))
-    nextId <- getNextID
-    writeLog $ CreateLog nextId task start end
+    entries <- readLog
+    _ <- evaluate entries
+    writeLog $ CreateLog (nextId entries) task start end
+    let session = (diffTimeInSeconds end start)
+    let today = filter (entryBetween (startOfDay end) (endOfDay end)) entries
+    let week = filter (entryBetween (startOfWeek end) (endOfWeek end)) entries
+    putStrLn ""
+    putStrLn $ printf " Just Now: " ++ showDuration session
+    putStrLn $ printf "    Today: " ++ (showDuration $ session + (sum $ map duration today))
+    putStrLn $ printf "This Week: " ++ (showDuration $ session + (sum $ map duration week))
 
 processCommand SummaryDaily = do
     entries <- readLog
@@ -159,11 +168,10 @@ processCommand SummaryDaily = do
     putStrLn "Today:"
     printTaskDurations $ filter (entryBetween (startOfDay now) (endOfDay now)) entries
 
-
 processCommand SummaryWeekly = do
     entries <- readLog
     now <- getLocalTime
-    putStrLn "This week:"
+    putStrLn "This Week:"
     printTaskDurations $ filter (entryBetween (startOfWeek now) (endOfWeek now)) entries
 
 processCommand SummaryTotal = do
