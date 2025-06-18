@@ -23,6 +23,7 @@ timer-hs delete <id>
 - Fix bug during setup when time.log doesn't exist.
 - More error checking.
 - Allow update to be given any set of fields & support more datetime formats.
+- Rounding bug: summary duration doesn't match session
 
 ### FUTURE
 ```

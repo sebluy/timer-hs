@@ -155,8 +155,9 @@ processCommand (Start task) = do
     _ <- evaluate entries
     writeLog $ CreateLog (nextId entries) task start end
     let session = (diffTimeInSeconds end start)
-    let today = filter (entryBetween (startOfDay end) (endOfDay end)) entries
-    let week = filter (entryBetween (startOfWeek end) (endOfWeek end)) entries
+    let thisTask = filter (\e -> entryTask e == task) entries
+    let today = filter (entryBetween (startOfDay end) (endOfDay end)) thisTask
+    let week = filter (entryBetween (startOfWeek end) (endOfWeek end)) thisTask
     putStrLn ""
     putStrLn $ printf " Just Now: " ++ showDuration session
     putStrLn $ printf "    Today: " ++ (showDuration $ session + (sum $ map duration today))
@@ -201,7 +202,12 @@ processCommand (Update eid task startTime endTime) = do
 processCommand Unknown = putStrLn "Usage:\n\n\
       \  timer-hs start <task>\n\
       \  timer-hs list\n\
-      \  timer-hs summary"
+      \  timer-hs summary\n\
+      \  timer-hs summary daily\n\
+      \  timer-hs summary total\n\
+      \  timer-hs summary weekly\n\
+      \  timer-hs update <id> <task> <start> <stop>\n\
+      \  timer-hs delete <id>\n"
 
 diffTimeInSeconds :: LocalTime -> LocalTime -> Int
 diffTimeInSeconds t1 t2 =
@@ -258,5 +264,3 @@ instance Show Entry where
         task
         (formatLocalTime start)
         (formatLocalTime end)
-
-
